@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>My Book Library</title>
+<!-- Favicon -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23570df8'%3E%3Cpath d='M4 4a2 2 0 0 1 2-2h12v18H6a2 2 0 0 0-2 2V4z'/%3E%3C/svg%3E" />
+<!-- Tailwind + DaisyUI -->
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" />
+<!-- Lucide Icons -->
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+  .book-card { transition: transform .2s, box-shadow .2s; }
+  .book-card:hover { transform: translateY(-3px); }
+</style>
+</head>
+<body class="min-h-screen bg-base-200 transition-colors">
+
+<!-- Navbar -->
+<div class="navbar bg-base-100 shadow-md sticky top-0 z-20">
+  <div class="flex-1 gap-2 px-4">
+    <i data-lucide="book-open" class="w-7 h-7 text-primary"></i>
+    <span class="text-xl font-bold">My Library</span>
+  </div>
+  <div class="flex-none gap-2 px-4">
+    <label class="input input-bordered input-sm flex items-center gap-2 w-48 md:w-64">
+      <i data-lucide="search" class="w-4 h-4 opacity-60"></i>
+      <input id="searchInput" type="text" placeholder="Search..." class="grow bg-transparent outline-none text-sm" />
+    </label>
+    <label class="swap swap-rotate btn btn-ghost btn-circle">
+      <input id="themeToggle" type="checkbox" />
+      <i data-lucide="sun" class="swap-off w-5 h-5"></i>
+      <i data-lucide="moon" class="swap-on w-5 h-5"></i>
+    </label>
+  </div>
+</div>
+
+<!-- Main -->
+<main class="max-w-6xl mx-auto p-4 md:p-6">
+  <!-- Filter + Add -->
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
+    <div id="filters" class="flex flex-wrap gap-2">
+      <button class="btn btn-sm filter-btn" data-filter="all">All</button>
+      <button class="btn btn-sm btn-primary filter-btn" data-filter="Reading">Reading</button>
+      <button class="btn btn-sm btn-secondary filter-btn" data-filter="Completed">Completed</button>
+      <button class="btn btn-sm btn-accent filter-btn" data-filter="Want to Read">Want to Read</button>
+    </div>
+    <button class="btn btn-primary gap-2" onclick="openModal()">
+      <i data-lucide="plus" class="w-4 h-4"></i> Add Book
+    </button>
+  </div>
+
+  <!-- Stats -->
+  <div id="stats" class="stats stats-vertical md:stats-horizontal shadow w-full mb-6 bg-base-100"></div>
+
+  <!-- Books grid -->
+  <div id="booksGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+  <div id="emptyState" class="hidden text-center py-16">
+    <i data-lucide="book-x" class="w-16 h-16 mx-auto opacity-40 mb-3"></i>
+    <p class="text-lg opacity-60">No books found. Add your first one!</p>
+  </div>
+</main>
+
+<!-- Modal -->
+<dialog id="bookModal" class="modal">
+  <div class="modal-box">
+    <h3 id="modalTitle" class="font-bold text-lg mb-4">Add Book</h3>
+    <form id="bookForm" class="flex flex-col gap-3">
+      <input type="hidden" id="bookId" />
+      <label class="form-control">
+        <span class="label-text mb-1">Title *</span>
+        <input id="title" type="text" required class="input input-bordered" placeholder="The Great Gatsby" />
+      </label>
+      <label class="form-control">
+        <span class="label-text mb-1">Author *</span>
+        <input id="author" type="text" required class="input input-bordered" placeholder="F. Scott Fitzgerald" />
+      </label>
+      <label class="form-control">
+        <span class="label-text mb-1">Status</span>
+        <select id="status" class="select select-bordered">
+          <option>Want to Read</option>
+          <option>Reading</option>
+          <option>Completed</option>
+        </select>
+      </label>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="form-control">
+          <span class="label-text mb-1">Pages Read</span>
+          <input id="pagesRead" type="number" min="0" class="input input-bordered" placeholder="0" />
+        </label>
+        <label class="form-control">
+          <span class="label-text mb-1">Total Pages</span>
+          <input id="totalPages" type="number" min="0" class="input input-bordered" placeholder="300" />
+        </label>
+      </div>
+      <div class="modal-action">
+        <button type="button" class="btn" onclick="bookModal.close()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script>
+/* ---------- IndexedDB wrapper ---------- */
+const DB_NAME = 'BookLibraryDB';
+const STORE = 'books';
+let db;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE)) {
+        d.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = e => { db = e.target.result; resolve(db); };
+    req.onerror = e => reject(e.target.error);
+  });
+}
+const tx = (mode='readonly') => db.transaction(STORE, mode).objectStore(STORE);
+const dbAll = () => new Promise(r => { const req = tx().getAll(); req.onsuccess = () => r(req.result); });
+const dbAdd = b => new Promise(r => { const req = tx('readwrite').add(b); req.onsuccess = () => r(req.result); });
+const dbPut = b => new Promise(r => { const req = tx('readwrite').put(b); req.onsuccess = () => r(req.result); });
+const dbDel = id => new Promise(r => { const req = tx('readwrite').delete(id); req.onsuccess = () => r(); });
+
+/* ---------- State ---------- */
+let books = [];
+let currentFilter = 'all';
+let currentSearch = '';
+
+/* ---------- Theme ---------- */
+const themeToggle = document.getElementById('themeToggle');
+themeToggle.addEventListener('change', () => {
+  document.documentElement.dataset.theme = themeToggle.checked ? 'dark' : 'light';
+});
+
+/* ---------- Render ---------- */
+function statusBadge(s) {
+  const map = { 'Reading':'badge-primary', 'Completed':'badge-secondary', 'Want to Read':'badge-accent' };
+  return `<span class="badge ${map[s] || 'badge-ghost'} gap-1">${s}</span>`;
+}
+
+function render() {
+  const q = currentSearch.toLowerCase();
+  const filtered = books.filter(b => {
+    const matchF = currentFilter === 'all' || b.status === currentFilter;
+    const matchS = !q || b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q);
+    return matchF && matchS;
+  });
+
+  // Stats
+  const total = books.length;
+  const reading = books.filter(b => b.status==='Reading').length;
+  const completed = books.filter(b => b.status==='Completed').length;
+  const want = books.filter(b => b.status==='Want to Read').length;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="stat-title">Total</div><div class="stat-value text-lg">${total}</div></div>
+    <div class="stat"><div class="stat-title">Reading</div><div class="stat-value text-lg text-primary">${reading}</div></div>
+    <div class="stat"><div class="stat-title">Completed</div><div class="stat-value text-lg text-secondary">${completed}</div></div>
+    <div class="stat"><div class="stat-title">Want to Read</div><div class="stat-value text-lg text-accent">${want}</div></div>
+  `;
+
+  // Grid
+  const grid = document.getElementById('booksGrid');
+  const empty = document.getElementById('emptyState');
+  if (!filtered.length) {
+    grid.innerHTML = '';
+    empty.classList.remove('hidden');
+  } else {
+    empty.classList.add('hidden');
+    grid.innerHTML = filtered.map(b => {
+      const pct = b.totalPages ? Math.min(100, Math.round((b.pagesRead||0)/b.totalPages*100)) : 0;
+      return `
+      <div class="book-card card bg-base-100 shadow-md">
+        <div class="card-body p-5">
+          <div class="flex justify-between items-start gap-2">
+            <h2 class="card-title text-base leading-tight">${escapeHtml(b.title)}</h2>
+            ${statusBadge(b.status)}
+          </div>
+          <p class="text-sm opacity-70 flex items-center gap-1"><i data-lucide="user" class="w-3.5 h-3.5"></i>${escapeHtml(b.author)}</p>
+          ${b.totalPages ? `
+            <div>
+              <div class="flex justify-between text-xs opacity-70 mb-1">
+                <span>${b.pagesRead||0} / ${b.totalPages} pages</span>
+                <span>${pct}%</span>
+              </div>
+              <progress class="progress progress-primary w-full" value="${pct}" max="100"></progress>
+            </div>` : ''}
+          <div class="card-actions justify-end mt-2">
+            <button class="btn btn-ghost btn-sm btn-circle" onclick="editBook(${b.id})" title="Edit">
+              <i data-lucide="pencil" class="w-4 h-4"></i>
+            </button>
+            <button class="btn btn-ghost btn-sm btn-circle text-error" onclick="deleteBook(${b.id})" title="Delete">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  lucide.createIcons();
+}
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+/* ---------- Modal / CRUD ---------- */
+const modal = document.getElementById('bookModal');
+function openModal(book=null) {
+  document.getElementById('modalTitle').textContent = book ? 'Edit Book' : 'Add Book';
+  document.getElementById('bookId').value = book?.id || '';
+  document.getElementById('title').value = book?.title || '';
+  document.getElementById('author').value = book?.author || '';
+  document.getElementById('status').value = book?.status || 'Want to Read';
+  document.getElementById('pagesRead').value = book?.pagesRead || '';
+  document.getElementById('totalPages').value = book?.totalPages || '';
+  modal.showModal();
+}
+window.editBook = id => openModal(books.find(b=>b.id===id));
+
+window.deleteBook = async id => {
+  if (!confirm('Delete this book?')) return;
+  await dbDel(id);
+  books = await dbAll();
+  render();
+};
+
+document.getElementById('bookForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const id = document.getElementById('bookId').value;
+  const data = {
+    title: document.getElementById('title').value.trim(),
+    author: document.getElementById('author').value.trim(),
+    status: document.getElementById('status').value,
+    pagesRead: +document.getElementById('pagesRead').value || 0,
+    totalPages: +document.getElementById('totalPages').value || 0,
+  };
+  if (id) { data.id = +id; await dbPut(data); }
+  else { await dbAdd(data); }
+  books = await dbAll();
+  render();
+  modal.close();
+});
+
+/* ---------- Filters / Search ---------- */
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentFilter = btn.dataset.filter;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('btn-primary','btn-secondary','btn-accent','btn-neutral'));
+    const color = { all:'btn-neutral', Reading:'btn-primary', Completed:'btn-secondary', 'Want to Read':'btn-accent' }[currentFilter];
+    btn.classList.add(color);
+    render();
+  });
+});
+document.getElementById('searchInput').addEventListener('input', e => {
+  currentSearch = e.target.value;
+  render();
+});
+
+/* ---------- Init ---------- */
+(async () => {
+  await openDB();
+  books = await dbAll();
+  render();
+})();
+</script>
+</body>
+</html>
